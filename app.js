@@ -38,6 +38,7 @@ mongoose.connect(`mongodb://localhost/${process.env.DATABASE}`, {
 // Configuración de hbs
 app.set('view engine', 'hbs');
 app.set('views', __dirname + '/views');
+hbs.registerPartials(__dirname + "/views/partials");
 
 // Configuración del body parser:
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -48,7 +49,7 @@ app.use(express.static(__dirname + '/public'));
 // Configuración de cookies:
 app.use(session({
     secret: "basic-auth-secret",
-    cookie: { maxAge: 60000 },
+    // cookie: { maxAge: 60000 },
     saveUninitialized: true,
     resave: true,
     store: new MongoStore({
@@ -56,102 +57,12 @@ app.use(session({
       ttl: 24 * 60 * 60 // 1 day
     })
   }));
-  
-
 
 //ROUTES
+
 app.get('/', (req, res, next)=>{
-                
-    res.render('home');
-});
-
-app.get('/new-videogame', (req, res, next)=>{
-    res.render('newVideogame');
-});
-
-app.post('/new-videogame', (req, res, next)=>{
-
-    const splitString = (_string)=>{
-        const theString = _string;
-        const splittedString = theString.split(',');
-        return splittedString;
-    };
-
-    const arrayPlatform = splitString(req.body.platform);
-    const arrayGenre = splitString(req.body.genre);
-    
-
-    const newVideogame = {...req.body, genre: arrayGenre, platform: arrayPlatform};
-
-    Videogame.create(newVideogame)
-             .then((result)=>{
-                 console.log(result);
-                 res.redirect('all-videogames');
-                })
-             .catch((err)=>{console.log(err);});
-});
-
-app.get('/all-videogames', (req, res, next)=>{
-
-    Videogame.find({}, {name: 1, imageUrl: 1, _id: 1}, {sort: {rating: -1}})
-             .then((videogames)=>{
-                 res.render('allVideogames', {videogames});
-             })
-             .catch((err)=>{
-                 console.log(err);
-                 res.send(err);
-             })
-})
-
-app.get('/videogame/:id', (req, res, next)=>{
-    const videogameID = req.params.id;
-    
-    Videogame.findById(videogameID)
-            .then((videogame)=>{
-                res.render('singleVideogame', videogame);
-            })
-            .catch((err)=>{
-                 console.log(err);
-                res.send(err);
-            });
-});
-
-app.post('/delete-game/:id', (req, res, next)=>{
-    const id = req.params.id;
-    Videogame.findByIdAndDelete(id)
-            .then(() => {
-                res.redirect('/all-videogames');
-            }).catch((err) => {
-                console.log(err);
-                res.send(err);
-            });
-});
-
-app.get('/edit-videogame/:id', (req, res, next)=>{
-    const _id = req.params.id;
-    Videogame.findById(_id)
-            .then((result)=>{
-                res.render('editForm', result);
-            })
-            .catch((err)=>{
-                console.log(err);
-                res.send(err);
-            })
-});
-
-app.post('/edit-videogame/:id', (req, res, next)=>{
-
-    const _id = req.params.id;
-    const editedVideogame = req.body;
-
-    Videogame.findByIdAndUpdate(_id, editedVideogame)
-        .then(()=>{
-            res.redirect(`/videogame/${_id}`)
-        })
-        .catch((err)=>{
-            console.log(err);
-            res.send(err);
-        })
+    console.log(req.session);
+    res.render('home', {session: req.session.currentUser});
 });
 
 app.get('/sign-up', (req, res, next)=>{
@@ -217,6 +128,123 @@ app.post('/log-in', (req, res, next)=>{
 
     
 });
+
+app.get('/log-out', (req, res, next)=>{
+    req.session.destroy();
+    res.redirect('/');
+})
+//---------------------------------------------
+//MIDDLEWARE FILTRO PARA LAS SESSION:
+app.use((req, res, next) => {
+    if (req.session.currentUser) { // <== if there's user in the session (user is logged in)
+      next(); // ==> go to the next route ---
+    } else {                          
+      res.redirect("/log-in");         
+    }                                 
+  }); 
+//---------------------------------------------
+app.get('/new-videogame', (req, res, next)=>{
+        res.render('newVideogame');
+});
+
+app.post('/new-videogame', (req, res, next)=>{
+
+    const splitString = (_string)=>{
+        const theString = _string;
+        const splittedString = theString.split(',');
+        return splittedString;
+    };
+
+    const arrayPlatform = splitString(req.body.platform);
+    const arrayGenre = splitString(req.body.genre);
+    
+
+    const newVideogame = {...req.body, genre: arrayGenre, platform: arrayPlatform};
+
+    Videogame.create(newVideogame)
+             .then((createdVideogame)=>{
+                 console.log(createdVideogame);
+                 User.updateOne({email: req.session.currentUser}, {$push: {videogames: createdVideogame._id}})
+                    .then(()=>{});
+                 res.redirect('all-videogames');
+                })
+             .catch((err)=>{console.log(err);});
+});
+
+app.get('/all-videogames', (req, res, next)=>{
+        // Videogame.find({}, {name: 1, imageUrl: 1, _id: 1}, {sort: {rating: -1}})
+        //         .then((videogames)=>{
+        //             res.render('allVideogames', {videogames});
+        //         })
+        //         .catch((err)=>{
+        //             console.log(err);
+        //             res.send(err);
+        //         });
+
+    User.findOne({email: req.session.currentUser})
+        .populate('videogames')
+        .then((user)=>{
+            const videogames = user.videogames
+            res.render('allVideogames', {videogames})
+        })
+        .catch((err)=>{
+            console.log(err);
+        })
+})
+
+app.get('/videogame/:id', (req, res, next)=>{
+
+        const videogameID = req.params.id;
+        
+        Videogame.findById(videogameID)
+                .then((videogame)=>{
+                    res.render('singleVideogame', videogame);
+                })
+                .catch((err)=>{
+                     console.log(err);
+                    res.send(err);
+                });
+});
+
+app.post('/delete-game/:id', (req, res, next)=>{
+    const id = req.params.id;
+    Videogame.findByIdAndDelete(id)
+            .then(() => {
+                res.redirect('/all-videogames');
+            }).catch((err) => {
+                console.log(err);
+                res.send(err);
+            });
+});
+
+app.get('/edit-videogame/:id', (req, res, next)=>{
+        const _id = req.params.id;
+        Videogame.findById(_id)
+                .then((result)=>{
+                    res.render('editForm', result);
+                })
+                .catch((err)=>{
+                    console.log(err);
+                    res.send(err);
+                });
+});
+
+app.post('/edit-videogame/:id', (req, res, next)=>{
+
+    const _id = req.params.id;
+    const editedVideogame = req.body;
+
+    Videogame.findByIdAndUpdate(_id, editedVideogame)
+        .then(()=>{
+            res.redirect(`/videogame/${_id}`)
+        })
+        .catch((err)=>{
+            console.log(err);
+            res.send(err);
+        })
+});
+
+
 
 //LISTENER
 app.listen(process.env.PORT, ()=>{
